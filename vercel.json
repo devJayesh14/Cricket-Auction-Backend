@@ -31,6 +31,10 @@
         {
           "key": "Access-Control-Expose-Headers",
           "value": "Authorization"
+        },
+        {
+          "key": "Access-Control-Max-Age",
+          "value": "86400"
         }
       ]
     }
