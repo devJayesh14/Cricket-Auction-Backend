@@ -11,14 +11,14 @@ function errorHandler(err, req, res, next) {
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal Server Error';
 
-  // Log error for debugging (in production, use proper logging service)
-  if (process.env.NODE_ENV === 'development') {
-    console.error('Error:', {
-      message: err.message,
-      stack: err.stack,
-      statusCode: err.statusCode,
-    });
-  }
+  // Log error for debugging (always log in serverless for debugging)
+  console.error('Error:', {
+    message: err.message,
+    stack: err.stack,
+    statusCode: err.statusCode,
+    name: err.name,
+    code: err.code
+  });
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {

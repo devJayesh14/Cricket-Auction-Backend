@@ -10,6 +10,7 @@ const { PORT, MONGODB_URI, CORS_ORIGIN } = require('./config/environment');
 
 // Only import socket.io and scheduled tasks if not on Vercel
 const isVercelEnv = process.env.VERCEL === '1' || process.env.VERCEL;
+const isVercel = isVercelEnv;
 let initializeSocket, startScheduledChecker;
 
 if (!isVercelEnv) {
@@ -23,6 +24,39 @@ if (!isVercelEnv) {
 
 const app = express();
 const httpServer = http.createServer(app);
+
+// MongoDB connection string - use from environment config
+const MONGODB_URI_ACTUAL = MONGODB_URI;
+
+// Connect to MongoDB
+// For serverless, reuse existing connection if available
+const connectDB = async () => {
+  try {
+    // Check if already connected
+    if (mongoose.connection.readyState === 1) {
+      return; // Already connected
+    }
+
+    // Connect with shorter timeout for serverless
+    await mongoose.connect(MONGODB_URI_ACTUAL, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: isVercel ? 3000 : 5000,
+      socketTimeoutMS: isVercel ? 3000 : 45000,
+    });
+    
+    console.log(isVercel ? 'MongoDB Connected (Serverless)' : 'MongoDB Connected');
+  } catch (err) {
+    console.error('MongoDB Connection Error:', err.message);
+    // Don't throw in serverless - let it retry on next request
+    if (!isVercel) {
+      console.error('MongoDB connection failed, exiting...');
+      process.exit(1);
+    }
+    // In serverless, continue without connection - will retry on next request
+    // Don't throw - let middleware handle retry
+  }
+};
 
 // CORS - Manual headers to ensure all requests are allowed (FIRST MIDDLEWARE)
 app.use((req, res, next) => {
@@ -56,6 +90,24 @@ if (!process.env.VERCEL) {
   app.use('/uploads', express.static('uploads'));
 }
 
+// Root path handler
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    message: 'Cricket Auction API is running',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      auth: '/api/auth',
+      events: '/api/events',
+      players: '/api/players',
+      teams: '/api/teams',
+      bids: '/api/bids'
+    }
+  });
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
@@ -69,27 +121,37 @@ app.get('/health', (req, res) => {
 // Middleware to ensure MongoDB connection for API routes (serverless)
 if (isVercel) {
   app.use('/api', async (req, res, next) => {
-    // Check MongoDB connection
-    if (mongoose.connection.readyState === 0) {
-      // Not connected, try to connect
-      try {
-        await connectDB();
-      } catch (err) {
-        return res.status(503).json({
-          success: false,
-          message: 'Database connection unavailable',
-          error: 'Please try again in a moment'
-        });
+    try {
+      // Check MongoDB connection
+      if (mongoose.connection.readyState === 0) {
+        // Not connected, try to connect
+        try {
+          await connectDB();
+        } catch (err) {
+          console.error('MongoDB connection failed in middleware:', err.message);
+          return res.status(503).json({
+            success: false,
+            message: 'Database connection unavailable',
+            error: 'Please try again in a moment'
+          });
+        }
       }
+      
+      // If connection is in progress, wait a bit
+      if (mongoose.connection.readyState === 2) {
+        // Connecting state, wait a moment
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      next();
+    } catch (err) {
+      console.error('Error in MongoDB connection middleware:', err);
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: 'An error occurred while connecting to the database'
+      });
     }
-    
-    // If connection is in progress, wait a bit
-    if (mongoose.connection.readyState === 2) {
-      // Connecting state, wait a moment
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    next();
   });
 }
 
@@ -107,41 +169,6 @@ app.use('/api/bids', require('./routes/bids.routes'));
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
-
-// Check if running on Vercel (already set above)
-const isVercel = isVercelEnv;
-
-// MongoDB connection string - use from environment config
-const MONGODB_URI_ACTUAL = MONGODB_URI;
-
-// Connect to MongoDB
-// For serverless, reuse existing connection if available
-const connectDB = async () => {
-  try {
-    // Check if already connected
-    if (mongoose.connection.readyState === 1) {
-      return; // Already connected
-    }
-
-    // Connect with shorter timeout for serverless
-    await mongoose.connect(MONGODB_URI_ACTUAL, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: isVercel ? 3000 : 5000,
-      socketTimeoutMS: isVercel ? 3000 : 45000,
-    });
-    
-    console.log(isVercel ? 'MongoDB Connected (Serverless)' : 'MongoDB Connected');
-  } catch (err) {
-    console.error('MongoDB Connection Error:', err.message);
-    // Don't throw in serverless - let it retry on next request
-    if (!isVercel) {
-      console.error('MongoDB connection failed, exiting...');
-      process.exit(1);
-    }
-    // In serverless, continue without connection - will retry on next request
-  }
-};
 
 // Connect to MongoDB (non-blocking for serverless)
 if (isVercel) {
