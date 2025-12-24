@@ -59,16 +59,20 @@ const connectDB = async () => {
 };
 
 // CORS - Manual headers to ensure all requests are allowed (FIRST MIDDLEWARE)
+// This MUST be the first middleware to handle preflight requests
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Set CORS headers for all requests
+  const origin = req.headers.origin;
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.setHeader('Access-Control-Expose-Headers', 'Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
   
-  // Handle preflight OPTIONS request
+  // Handle preflight OPTIONS request immediately
   if (req.method === 'OPTIONS') {
-    return res.status(204).send();
+    return res.status(204).end();
   }
   next();
 });
