@@ -2,43 +2,54 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Create uploads directories if they don't exist
+// Check if running on Vercel (serverless)
+const isVercel = process.env.VERCEL === '1' || process.env.VERCEL;
+
+// Create uploads directories if they don't exist (skip on Vercel - read-only filesystem)
 const playersUploadsDir = path.join(__dirname, '../../uploads/players');
 const teamsUploadsDir = path.join(__dirname, '../../uploads/teams');
-if (!fs.existsSync(playersUploadsDir)) {
-  fs.mkdirSync(playersUploadsDir, { recursive: true });
-}
-if (!fs.existsSync(teamsUploadsDir)) {
-  fs.mkdirSync(teamsUploadsDir, { recursive: true });
+if (!isVercel) {
+  if (!fs.existsSync(playersUploadsDir)) {
+    fs.mkdirSync(playersUploadsDir, { recursive: true });
+  }
+  if (!fs.existsSync(teamsUploadsDir)) {
+    fs.mkdirSync(teamsUploadsDir, { recursive: true });
+  }
 }
 
 // Configure storage for player photos
-const playerStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, playersUploadsDir);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename: timestamp-random-originalname
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    cb(null, `${name}-${uniqueSuffix}${ext}`);
-  }
-});
+// On Vercel, use memory storage (filesystem is read-only)
+const playerStorage = isVercel 
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: function (req, file, cb) {
+        cb(null, playersUploadsDir);
+      },
+      filename: function (req, file, cb) {
+        // Generate unique filename: timestamp-random-originalname
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        const name = path.basename(file.originalname, ext);
+        cb(null, `${name}-${uniqueSuffix}${ext}`);
+      }
+    });
 
 // Configure storage for team logos
-const teamStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, teamsUploadsDir);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename: timestamp-random-originalname
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    cb(null, `${name}-${uniqueSuffix}${ext}`);
-  }
-});
+// On Vercel, use memory storage (filesystem is read-only)
+const teamStorage = isVercel
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: function (req, file, cb) {
+        cb(null, teamsUploadsDir);
+      },
+      filename: function (req, file, cb) {
+        // Generate unique filename: timestamp-random-originalname
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        const name = path.basename(file.originalname, ext);
+        cb(null, `${name}-${uniqueSuffix}${ext}`);
+      }
+    });
 
 // File filter - only accept images
 const imageFileFilter = (req, file, cb) => {
@@ -79,19 +90,22 @@ const teamUpload = multer({
 });
 
 // Configure multer for CSV files
-const csvStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../../uploads/csv'));
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `players-${uniqueSuffix}.csv`);
-  }
-});
+// On Vercel, use memory storage (filesystem is read-only)
+const csvStorage = isVercel
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: function (req, file, cb) {
+        cb(null, path.join(__dirname, '../../uploads/csv'));
+      },
+      filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, `players-${uniqueSuffix}.csv`);
+      }
+    });
 
-// Create CSV uploads directory
+// Create CSV uploads directory (skip on Vercel)
 const csvUploadsDir = path.join(__dirname, '../../uploads/csv');
-if (!fs.existsSync(csvUploadsDir)) {
+if (!isVercel && !fs.existsSync(csvUploadsDir)) {
   fs.mkdirSync(csvUploadsDir, { recursive: true });
 }
 

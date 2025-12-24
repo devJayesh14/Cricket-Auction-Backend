@@ -18,8 +18,18 @@ async function createPlayer(req, res, next) {
     // Handle file upload - photo path from multer
     let photoPath = null;
     if (req.file) {
-      // Store relative path: uploads/players/filename.jpg
-      photoPath = `uploads/players/${req.file.filename}`;
+      // On Vercel (memory storage), file is in buffer, not on disk
+      // For now, we'll need to upload to cloud storage (Vercel Blob, S3, etc.)
+      // TODO: Implement cloud storage upload for Vercel
+      if (process.env.VERCEL && req.file.buffer) {
+        // Memory storage - would need to upload to cloud storage
+        // For now, skip file storage on Vercel or use a placeholder
+        console.warn('File upload on Vercel requires cloud storage integration');
+        photoPath = null; // Will need cloud storage URL instead
+      } else {
+        // Disk storage - normal path
+        photoPath = `uploads/players/${req.file.filename}`;
+      }
     } else if (req.body.photo) {
       // Fallback: if photo is sent as base64 (for backward compatibility)
       // Store it, but this is not recommended for large files
