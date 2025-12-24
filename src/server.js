@@ -7,8 +7,19 @@ const eventRoutes = require('./routes/events.routes');
 const playerRoutes = require('./routes/players.routes');
 const errorHandler = require('./middleware/error.middleware');
 const { PORT, MONGODB_URI, CORS_ORIGIN } = require('./config/environment');
-const { initializeSocket } = require('./socket/socketServer');
-const { startScheduledChecker } = require('./utils/scheduledStart');
+
+// Only import socket.io and scheduled tasks if not on Vercel
+const isVercelEnv = process.env.VERCEL === '1' || process.env.VERCEL;
+let initializeSocket, startScheduledChecker;
+
+if (!isVercelEnv) {
+  try {
+    initializeSocket = require('./socket/socketServer').initializeSocket;
+    startScheduledChecker = require('./utils/scheduledStart').startScheduledChecker;
+  } catch (err) {
+    console.warn('Could not load socket/scheduled tasks:', err.message);
+  }
+}
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -50,9 +61,37 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    message: 'Cricket Auction API is running'
+    message: 'Cricket Auction API is running',
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
 });
+
+// Middleware to ensure MongoDB connection for API routes (serverless)
+if (isVercel) {
+  app.use('/api', async (req, res, next) => {
+    // Check MongoDB connection
+    if (mongoose.connection.readyState === 0) {
+      // Not connected, try to connect
+      try {
+        await connectDB();
+      } catch (err) {
+        return res.status(503).json({
+          success: false,
+          message: 'Database connection unavailable',
+          error: 'Please try again in a moment'
+        });
+      }
+    }
+    
+    // If connection is in progress, wait a bit
+    if (mongoose.connection.readyState === 2) {
+      // Connecting state, wait a moment
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    next();
+  });
+}
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -69,40 +108,64 @@ app.use('/api/bids', require('./routes/bids.routes'));
 // Error handling middleware (must be last)
 app.use(errorHandler);
 
-// Check if running on Vercel
-const isVercel = process.env.VERCEL === '1' || process.env.VERCEL;
+// Check if running on Vercel (already set above)
+const isVercel = isVercelEnv;
 
 // MongoDB connection string - use from environment config
 const MONGODB_URI_ACTUAL = MONGODB_URI;
 
 // Connect to MongoDB
 // For serverless, reuse existing connection if available
-if (mongoose.connection.readyState === 0) {
-  mongoose.connect(MONGODB_URI_ACTUAL, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-  })
-  .then(() => {
+const connectDB = async () => {
+  try {
+    // Check if already connected
+    if (mongoose.connection.readyState === 1) {
+      return; // Already connected
+    }
+
+    // Connect with shorter timeout for serverless
+    await mongoose.connect(MONGODB_URI_ACTUAL, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: isVercel ? 3000 : 5000,
+      socketTimeoutMS: isVercel ? 3000 : 45000,
+    });
+    
     console.log(isVercel ? 'MongoDB Connected (Serverless)' : 'MongoDB Connected');
-  })
-  .catch(err => {
-    console.error('MongoDB Connection Error:', err);
+  } catch (err) {
+    console.error('MongoDB Connection Error:', err.message);
     // Don't throw in serverless - let it retry on next request
     if (!isVercel) {
+      console.error('MongoDB connection failed, exiting...');
       process.exit(1);
     }
+    // In serverless, continue without connection - will retry on next request
+  }
+};
+
+// Connect to MongoDB (non-blocking for serverless)
+if (isVercel) {
+  // For serverless, connect asynchronously without blocking
+  connectDB().catch(err => {
+    console.error('Initial MongoDB connection failed (will retry):', err.message);
   });
+} else {
+  // For regular server, connect synchronously
+  connectDB();
 }
 
 // Only start HTTP server and Socket.io if NOT on Vercel
 if (!isVercel) {
   // Initialize Socket.io (only for non-serverless)
-  initializeSocket(httpServer);
-  console.log('Socket.io initialized');
+  if (initializeSocket) {
+    initializeSocket(httpServer);
+    console.log('Socket.io initialized');
+  }
   
   // Start scheduled start checker
-  startScheduledChecker();
+  if (startScheduledChecker) {
+    startScheduledChecker();
+  }
   
   // Start server
   httpServer.listen(PORT, () => {
