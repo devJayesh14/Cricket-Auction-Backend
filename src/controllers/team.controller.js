@@ -1,4 +1,5 @@
 const Team = require('../models/Team');
+const cloudStorage = require('../services/cloudStorage.service');
 
 /**
  * Create a new team
@@ -14,18 +15,42 @@ async function createTeam(req, res, next) {
       status: 'active'
     };
 
-    // Add logo if uploaded - store relative path from project root
+    // Handle logo upload - use cloud storage if configured, otherwise use local path
     if (req.file) {
-      // req.file.path contains full path, normalize it to relative path
-      // Convert backslashes to forward slashes for consistency
-      let logoPath = req.file.path.replace(/\\/g, '/');
-      // Extract relative path (should be uploads/teams/filename)
-      const pathParts = logoPath.split('/');
-      const uploadsIndex = pathParts.indexOf('uploads');
-      if (uploadsIndex !== -1) {
-        logoPath = pathParts.slice(uploadsIndex).join('/');
+      try {
+        if (cloudStorage.isConfigured()) {
+          // Use cloud storage (works for both local and serverless)
+          if (req.file.buffer) {
+            // Serverless environment (memory storage)
+            teamData.logo = await cloudStorage.uploadImage(
+              req.file.buffer,
+              'teams',
+              req.file.originalname
+            );
+          } else if (req.file.path) {
+            // Local environment (disk storage)
+            teamData.logo = await cloudStorage.uploadImageFromPath(
+              req.file.path,
+              'teams'
+            );
+          }
+        } else if (req.file.path) {
+          // Fallback to local storage if cloud storage not configured
+          let logoPath = req.file.path.replace(/\\/g, '/');
+          const pathParts = logoPath.split('/');
+          const uploadsIndex = pathParts.indexOf('uploads');
+          if (uploadsIndex !== -1) {
+            logoPath = pathParts.slice(uploadsIndex).join('/');
+          }
+          teamData.logo = logoPath;
+        } else {
+          console.warn('File upload detected but cloud storage not configured and no file path available.');
+        }
+      } catch (uploadError) {
+        console.error('Error uploading logo:', uploadError);
+        // Don't fail the request, just log the error and continue without logo
+        // You might want to throw the error instead if logo is required
       }
-      teamData.logo = logoPath;
     }
 
     const team = new Team(teamData);
@@ -176,18 +201,53 @@ async function updateTeam(req, res, next) {
       updateData.shortName = updateData.shortName.toUpperCase();
     }
 
-    // Add logo if uploaded - store relative path from project root
+    // Handle logo upload - use cloud storage if configured, otherwise use local path
     if (req.file) {
-      // req.file.path contains full path, normalize it to relative path
-      // Convert backslashes to forward slashes for consistency
-      let logoPath = req.file.path.replace(/\\/g, '/');
-      // Extract relative path (should be uploads/teams/filename)
-      const pathParts = logoPath.split('/');
-      const uploadsIndex = pathParts.indexOf('uploads');
-      if (uploadsIndex !== -1) {
-        logoPath = pathParts.slice(uploadsIndex).join('/');
+      try {
+        // Get existing team to delete old logo from cloud storage if needed
+        const existingTeam = await Team.findById(id);
+        const oldLogoUrl = existingTeam?.logo;
+
+        if (cloudStorage.isConfigured()) {
+          // Use cloud storage (works for both local and serverless)
+          if (req.file.buffer) {
+            // Serverless environment (memory storage)
+            updateData.logo = await cloudStorage.uploadImage(
+              req.file.buffer,
+              'teams',
+              req.file.originalname
+            );
+          } else if (req.file.path) {
+            // Local environment (disk storage)
+            updateData.logo = await cloudStorage.uploadImageFromPath(
+              req.file.path,
+              'teams'
+            );
+          }
+
+          // Delete old logo from cloud storage if it was a cloud URL
+          if (oldLogoUrl && oldLogoUrl.includes('cloudinary.com')) {
+            await cloudStorage.deleteImage(oldLogoUrl).catch(err => {
+              console.error('Error deleting old logo from cloud storage:', err);
+              // Don't fail if deletion fails
+            });
+          }
+        } else if (req.file.path) {
+          // Fallback to local storage if cloud storage not configured
+          let logoPath = req.file.path.replace(/\\/g, '/');
+          const pathParts = logoPath.split('/');
+          const uploadsIndex = pathParts.indexOf('uploads');
+          if (uploadsIndex !== -1) {
+            logoPath = pathParts.slice(uploadsIndex).join('/');
+          }
+          updateData.logo = logoPath;
+        } else {
+          console.warn('File upload detected but cloud storage not configured and no file path available.');
+        }
+      } catch (uploadError) {
+        console.error('Error uploading logo:', uploadError);
+        // Don't fail the request, just log the error
       }
-      updateData.logo = logoPath;
     }
 
     const team = await Team.findByIdAndUpdate(

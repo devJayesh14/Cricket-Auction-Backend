@@ -1,6 +1,7 @@
 const Player = require('../models/Player');
 const Team = require('../models/Team'); // Ensure Team model is loaded for populate
 const path = require('path');
+const cloudStorage = require('../services/cloudStorage.service');
 
 /**
  * Create a new player
@@ -15,20 +16,35 @@ async function createPlayer(req, res, next) {
       basePrice
     } = req.body;
 
-    // Handle file upload - photo path from multer
+    // Handle file upload - use cloud storage if configured, otherwise use local path
     let photoPath = null;
     if (req.file) {
-      // On Vercel (memory storage), file is in buffer, not on disk
-      // For now, we'll need to upload to cloud storage (Vercel Blob, S3, etc.)
-      // TODO: Implement cloud storage upload for Vercel
-      if (process.env.VERCEL && req.file.buffer) {
-        // Memory storage - would need to upload to cloud storage
-        // For now, skip file storage on Vercel or use a placeholder
-        console.warn('File upload on Vercel requires cloud storage integration');
-        photoPath = null; // Will need cloud storage URL instead
-      } else {
-        // Disk storage - normal path
-        photoPath = `uploads/players/${req.file.filename}`;
+      try {
+        if (cloudStorage.isConfigured()) {
+          // Use cloud storage (works for both local and serverless)
+          if (req.file.buffer) {
+            // Serverless environment (memory storage)
+            photoPath = await cloudStorage.uploadImage(
+              req.file.buffer,
+              'players',
+              req.file.originalname
+            );
+          } else if (req.file.path) {
+            // Local environment (disk storage)
+            photoPath = await cloudStorage.uploadImageFromPath(
+              req.file.path,
+              'players'
+            );
+          }
+        } else if (req.file.path) {
+          // Fallback to local storage if cloud storage not configured
+          photoPath = `uploads/players/${req.file.filename}`;
+        } else {
+          console.warn('File upload detected but cloud storage not configured and no file path available.');
+        }
+      } catch (uploadError) {
+        console.error('Error uploading photo:', uploadError);
+        // Don't fail the request, just log the error and continue without photo
       }
     } else if (req.body.photo) {
       // Fallback: if photo is sent as base64 (for backward compatibility)
@@ -56,12 +72,11 @@ async function createPlayer(req, res, next) {
       data: player,
     });
   } catch (error) {
-    // Delete uploaded file if there's an error
-    if (req.file) {
+    // Delete uploaded file if there's an error (only if using disk storage)
+    if (req.file && req.file.path) {
       const fs = require('fs');
-      const filePath = req.file.path;
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
       }
     }
     next(error);
@@ -125,9 +140,53 @@ async function updatePlayer(req, res, next) {
     const { id } = req.params;
     const updateData = { ...req.body };
 
-    // Handle file upload if provided
+    // Handle file upload if provided - use cloud storage if configured
     if (req.file) {
-      updateData.photo = req.file.path;
+      try {
+        // Get existing player to delete old photo from cloud storage if needed
+        const existingPlayer = await Player.findById(id);
+        const oldPhotoUrl = existingPlayer?.photo;
+
+        if (cloudStorage.isConfigured()) {
+          // Use cloud storage (works for both local and serverless)
+          if (req.file.buffer) {
+            // Serverless environment (memory storage)
+            updateData.photo = await cloudStorage.uploadImage(
+              req.file.buffer,
+              'players',
+              req.file.originalname
+            );
+          } else if (req.file.path) {
+            // Local environment (disk storage)
+            updateData.photo = await cloudStorage.uploadImageFromPath(
+              req.file.path,
+              'players'
+            );
+          }
+
+          // Delete old photo from cloud storage if it was a cloud URL
+          if (oldPhotoUrl && oldPhotoUrl.includes('cloudinary.com')) {
+            await cloudStorage.deleteImage(oldPhotoUrl).catch(err => {
+              console.error('Error deleting old photo from cloud storage:', err);
+              // Don't fail if deletion fails
+            });
+          }
+        } else if (req.file.path) {
+          // Fallback to local storage if cloud storage not configured
+          let photoPath = req.file.path.replace(/\\/g, '/');
+          const pathParts = photoPath.split('/');
+          const uploadsIndex = pathParts.indexOf('uploads');
+          if (uploadsIndex !== -1) {
+            photoPath = pathParts.slice(uploadsIndex).join('/');
+          }
+          updateData.photo = photoPath;
+        } else {
+          console.warn('File upload detected but cloud storage not configured and no file path available.');
+        }
+      } catch (uploadError) {
+        console.error('Error uploading photo:', uploadError);
+        // Don't fail the request, just log the error
+      }
     }
 
     // Parse statistics if provided as JSON string
@@ -163,12 +222,11 @@ async function updatePlayer(req, res, next) {
       data: player,
     });
   } catch (error) {
-    // Delete uploaded file if there's an error
-    if (req.file) {
+    // Delete uploaded file if there's an error (only if using disk storage)
+    if (req.file && req.file.path) {
       const fs = require('fs');
-      const filePath = req.file.path;
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
       }
     }
     next(error);
@@ -210,6 +268,13 @@ async function bulkImportPlayers(req, res, next) {
     }
 
     const fs = require('fs');
+    
+    // Check if file path exists (won't exist on Vercel/serverless)
+    if (!req.file.path) {
+      const error = new Error('CSV file upload not supported in serverless environment. Please use a different method.');
+      error.statusCode = 400;
+      throw error;
+    }
     
     // Read CSV file
     const fileContent = fs.readFileSync(req.file.path, 'utf-8');
@@ -314,8 +379,10 @@ async function bulkImportPlayers(req, res, next) {
       }
     }
 
-    // Delete uploaded CSV file
-    fs.unlinkSync(req.file.path);
+    // Delete uploaded CSV file (only if using disk storage)
+    if (req.file && req.file.path) {
+      fs.unlinkSync(req.file.path);
+    }
 
     res.status(200).json({
       success: true,
@@ -329,8 +396,8 @@ async function bulkImportPlayers(req, res, next) {
     });
 
   } catch (error) {
-    // Delete uploaded file if there's an error
-    if (req.file) {
+    // Delete uploaded file if there's an error (only if using disk storage)
+    if (req.file && req.file.path) {
       const fs = require('fs');
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
