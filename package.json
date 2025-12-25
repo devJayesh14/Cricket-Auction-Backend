@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "create-admin": "node src/scripts/createAdmin.js",
+    "fix-team-indexes": "node src/scripts/fixTeamIndexes.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

@@ -33,8 +33,21 @@ async function uploadImage(fileBuffer, folder, fileName) {
           return reject(new Error(`Failed to upload image: ${error.message}`));
         }
         
-        // Return the secure URL (use secure: true for HTTPS)
-        resolve(result.secure_url);
+        // Validate that we got a secure URL
+        if (!result || !result.secure_url) {
+          console.error('Cloudinary upload succeeded but no secure_url returned:', result);
+          return reject(new Error('Upload succeeded but no URL returned from Cloudinary'));
+        }
+        
+        // Ensure the URL is properly formatted (should start with https://)
+        const imageUrl = result.secure_url.trim();
+        if (!imageUrl.startsWith('https://')) {
+          console.warn('Cloudinary URL does not start with https://:', imageUrl);
+        }
+        
+        console.log('Cloudinary upload successful. URL:', imageUrl);
+        // Return the secure URL (HTTPS)
+        resolve(imageUrl);
       })
       .end(fileBuffer);
   });
@@ -59,7 +72,20 @@ async function uploadImageFromPath(filePath, folder) {
       unique_filename: true,
     });
 
-    return result.secure_url;
+    // Validate that we got a secure URL
+    if (!result || !result.secure_url) {
+      console.error('Cloudinary upload succeeded but no secure_url returned:', result);
+      throw new Error('Upload succeeded but no URL returned from Cloudinary');
+    }
+    
+    // Ensure the URL is properly formatted
+    const imageUrl = result.secure_url.trim();
+    if (!imageUrl.startsWith('https://')) {
+      console.warn('Cloudinary URL does not start with https://:', imageUrl);
+    }
+    
+    console.log('Cloudinary upload from path successful. URL:', imageUrl);
+    return imageUrl;
   } catch (error) {
     console.error('Cloudinary upload from path error:', error);
     throw new Error(`Failed to upload image: ${error.message}`);

@@ -414,7 +414,14 @@ function emitEventUpdate(eventId, eventData) {
  */
 async function emitAuctionEnded(eventId) {
   try {
-    const io = getIO();
+    let io;
+    try {
+      io = getIO();
+    } catch (error) {
+      console.error('Socket.io not initialized. Cannot emit auction:ended event:', error.message);
+      return;
+    }
+    
     const event = await AuctionEvent.findById(eventId)
       .populate('players', 'name role basePrice soldPrice status teamId')
       .populate('participatingTeams', 'name shortName logo');
@@ -507,8 +514,11 @@ async function emitAuctionEnded(eventId) {
     
     teamSummaries.push(...teamsMap.values());
 
-    io.to(`auction:${eventId}`).emit('auction:ended', {
-      auctionId: eventId,
+    const eventIdString = String(eventId);
+    const room = `auction:${eventIdString}`;
+    
+    const auctionEndedData = {
+      auctionId: eventIdString,
       status: 'completed',
       endedAt: event.completedAt?.toISOString() || new Date().toISOString(),
       finalStats: {
@@ -521,7 +531,12 @@ async function emitAuctionEnded(eventId) {
         mostExpensivePlayer
       },
       teamSummaries
-    });
+    };
+    
+    console.log(`Emitting auction:ended to room: ${room}`);
+    console.log('Auction ended data:', JSON.stringify(auctionEndedData, null, 2));
+    io.to(room).emit('auction:ended', auctionEndedData);
+    console.log(`✓ Auction ended event emitted successfully to room: ${room}`);
   } catch (error) {
     console.error('Error emitting auction ended event:', error);
   }

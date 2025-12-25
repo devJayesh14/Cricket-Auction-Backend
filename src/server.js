@@ -165,6 +165,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/players', playerRoutes);
 app.use('/api/teams', require('./routes/teams.routes'));
 app.use('/api/bids', require('./routes/bids.routes'));
+app.use('/api/test', require('./routes/test.routes')); // Test routes (can be removed in production)
 
 // TODO: Add other routes here
 // app.use('/api/players', playerRoutes);

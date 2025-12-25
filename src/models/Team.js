@@ -79,7 +79,8 @@ const teamSchema = new mongoose.Schema(
 
 // Indexes
 teamSchema.index({ name: 1 });
-teamSchema.index({ ownerId: 1 });
+// Sparse index on ownerId - only indexes non-null values, allowing multiple nulls
+teamSchema.index({ ownerId: 1 }, { sparse: true });
 teamSchema.index({ status: 1 });
 
 // Pre-save middleware to calculate remaining budget

@@ -8,11 +8,13 @@ async function createTeam(req, res, next) {
   try {
     const { name, shortName, budget } = req.body;
 
+    // Explicitly set ownerId to null - should only be set when assigning a team owner
     const teamData = {
       name,
       shortName: shortName.toUpperCase(),
       budget: budget || 10000, // Default budget ₹10k
-      status: 'active'
+      status: 'active',
+      ownerId: null // Always null when creating - will be set when assigning team owner
     };
 
     // Handle logo upload - use cloud storage if configured, otherwise use local path
@@ -22,20 +24,25 @@ async function createTeam(req, res, next) {
           // Use cloud storage (works for both local and serverless)
           if (req.file.buffer) {
             // Serverless environment (memory storage)
+            console.log('Uploading logo to Cloudinary from buffer (serverless)');
             teamData.logo = await cloudStorage.uploadImage(
               req.file.buffer,
               'teams',
               req.file.originalname
             );
+            console.log('Logo uploaded successfully:', teamData.logo);
           } else if (req.file.path) {
             // Local environment (disk storage)
+            console.log('Uploading logo to Cloudinary from path:', req.file.path);
             teamData.logo = await cloudStorage.uploadImageFromPath(
               req.file.path,
               'teams'
             );
+            console.log('Logo uploaded successfully:', teamData.logo);
           }
         } else if (req.file.path) {
           // Fallback to local storage if cloud storage not configured
+          console.log('Cloudinary not configured, using local storage');
           let logoPath = req.file.path.replace(/\\/g, '/');
           const pathParts = logoPath.split('/');
           const uploadsIndex = pathParts.indexOf('uploads');
@@ -43,14 +50,21 @@ async function createTeam(req, res, next) {
             logoPath = pathParts.slice(uploadsIndex).join('/');
           }
           teamData.logo = logoPath;
+          console.log('Logo saved to local path:', teamData.logo);
         } else {
-          console.warn('File upload detected but cloud storage not configured and no file path available.');
+          // Serverless environment but Cloudinary not configured
+          console.warn('⚠️ Logo upload skipped: Cloudinary not configured and no file path available (serverless environment).');
+          console.warn('⚠️ Please configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
+          // Logo will remain null
         }
       } catch (uploadError) {
-        console.error('Error uploading logo:', uploadError);
+        console.error('❌ Error uploading logo:', uploadError.message);
+        console.error('Stack:', uploadError.stack);
         // Don't fail the request, just log the error and continue without logo
         // You might want to throw the error instead if logo is required
       }
+    } else {
+      console.log('No file uploaded with team creation request');
     }
 
     const team = new Team(teamData);
@@ -63,8 +77,22 @@ async function createTeam(req, res, next) {
     });
   } catch (error) {
     if (error.code === 11000) {
+      // MongoDB duplicate key error
       const field = Object.keys(error.keyPattern)[0];
-      const err = new Error(`Team with this ${field} already exists`);
+      let errorMessage;
+      
+      // Provide more specific error messages for known fields
+      if (field === 'name') {
+        errorMessage = 'A team with this name already exists';
+      } else if (field === 'shortName') {
+        errorMessage = 'A team with this short name already exists';
+      } else if (field === 'ownerId') {
+        errorMessage = 'This user already owns a team. A user can only own one team.';
+      } else {
+        errorMessage = `Team with this ${field} already exists`;
+      }
+      
+      const err = new Error(errorMessage);
       err.statusCode = 409;
       return next(err);
     }
@@ -195,7 +223,11 @@ async function getTeamPlayersByEvent(req, res, next) {
 async function updateTeam(req, res, next) {
   try {
     const { id } = req.params;
-    const updateData = { ...req.body };
+    const { ownerId, ...rest } = req.body;
+    
+    // Do not allow ownerId to be updated directly through this endpoint
+    // ownerId should only be set when assigning a team owner via the auth/register endpoint
+    const updateData = { ...rest };
 
     if (updateData.shortName) {
       updateData.shortName = updateData.shortName.toUpperCase();
@@ -242,10 +274,12 @@ async function updateTeam(req, res, next) {
           }
           updateData.logo = logoPath;
         } else {
-          console.warn('File upload detected but cloud storage not configured and no file path available.');
+          // Serverless environment but Cloudinary not configured
+          console.warn('⚠️ Logo upload skipped: Cloudinary not configured and no file path available (serverless environment).');
+          console.warn('⚠️ Please configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables.');
         }
       } catch (uploadError) {
-        console.error('Error uploading logo:', uploadError);
+        console.error('❌ Error uploading logo:', uploadError.message);
         // Don't fail the request, just log the error
       }
     }
@@ -271,8 +305,22 @@ async function updateTeam(req, res, next) {
     });
   } catch (error) {
     if (error.code === 11000) {
+      // MongoDB duplicate key error
       const field = Object.keys(error.keyPattern)[0];
-      const err = new Error(`Team with this ${field} already exists`);
+      let errorMessage;
+      
+      // Provide more specific error messages for known fields
+      if (field === 'name') {
+        errorMessage = 'A team with this name already exists';
+      } else if (field === 'shortName') {
+        errorMessage = 'A team with this short name already exists';
+      } else if (field === 'ownerId') {
+        errorMessage = 'This user already owns a team. A user can only own one team.';
+      } else {
+        errorMessage = `Team with this ${field} already exists`;
+      }
+      
+      const err = new Error(errorMessage);
       err.statusCode = 409;
       return next(err);
     }
