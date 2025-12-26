@@ -14,11 +14,17 @@ let io;
  * Initialize Socket.io server
  */
 function initializeSocket(httpServer) {
+  const isVercel = process.env.VERCEL === '1' || process.env.VERCEL;
+  
   io = new Server(httpServer, {
     cors: {
       origin: '*', // Allow all origins
       methods: ["GET", "POST"]
-    }
+    },
+    // On Vercel, only use polling transport (WebSocket not supported in serverless)
+    transports: isVercel ? ['polling'] : ['polling', 'websocket'],
+    // Allow upgrade from polling to websocket only if not on Vercel
+    allowUpgrades: !isVercel
   });
 
   // Authentication middleware for Socket.io

@@ -8,18 +8,19 @@ const playerRoutes = require('./routes/players.routes');
 const errorHandler = require('./middleware/error.middleware');
 const { PORT, MONGODB_URI, CORS_ORIGIN } = require('./config/environment');
 
-// Only import socket.io and scheduled tasks if not on Vercel
+// Import socket.io and scheduled tasks
 const isVercelEnv = process.env.VERCEL === '1' || process.env.VERCEL;
 const isVercel = isVercelEnv;
 let initializeSocket, startScheduledChecker;
 
-if (!isVercelEnv) {
-  try {
-    initializeSocket = require('./socket/socketServer').initializeSocket;
+// Try to load socket.io (will work with polling transport on Vercel)
+try {
+  initializeSocket = require('./socket/socketServer').initializeSocket;
+  if (!isVercelEnv) {
     startScheduledChecker = require('./utils/scheduledStart').startScheduledChecker;
-  } catch (err) {
-    console.warn('Could not load socket/scheduled tasks:', err.message);
   }
+} catch (err) {
+  console.warn('Could not load socket/scheduled tasks:', err.message);
 }
 
 const app = express();
@@ -186,14 +187,18 @@ if (isVercel) {
   connectDB();
 }
 
-// Only start HTTP server and Socket.io if NOT on Vercel
-if (!isVercel) {
-  // Initialize Socket.io (only for non-serverless)
-  if (initializeSocket) {
+// Initialize Socket.io (works with polling transport on Vercel)
+if (initializeSocket) {
+  try {
     initializeSocket(httpServer);
-    console.log('Socket.io initialized');
+    console.log('Socket.io initialized' + (isVercel ? ' (polling mode on Vercel)' : ''));
+  } catch (err) {
+    console.error('Failed to initialize Socket.io:', err.message);
   }
-  
+}
+
+// Only start HTTP server if NOT on Vercel (Vercel handles this via serverless functions)
+if (!isVercel) {
   // Start scheduled start checker
   if (startScheduledChecker) {
     startScheduledChecker();
